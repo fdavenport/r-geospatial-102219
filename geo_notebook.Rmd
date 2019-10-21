@@ -1,0 +1,226 @@
+---
+title: "R Geospatial Overview"
+output: html_notebook
+---
+
+```{r, warning=F, results="hide"}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(rgdal)
+library(raster)
+```
+### Set your working directory to the folder you just downloaded or cloned: 
+```{r}
+setwd("~/Documents/teaching/r_geospatial/")
+```
+# Outline: 
+* Reading and plotting raster data
+* Raster calculations
+* Reading and plotting vector data
+* Combined vector and raster manipulation
+    * Example 1: calculating a buffer around the flux tower
+    * Example 2: extracting time-series data from a multi-band raster
+* Extras: reprojecting data, nice-looking plots
+
+# 1. Reading and plotting raster data
+### First, let's look at raster metadata using GDALinfo
+```{r}
+GDALinfo("./data/HARV_dsmCrop.tif")
+```
+### Load raster
+Note: raster() will create a single-band raster. stack() and brick() can be used to load/create a multi-band raster (more on that later)
+```{r}
+harv_dsm <- raster("./data/HARV_dsmCrop.tif")
+harv_dsm
+```
+### We can plot a raster using base R plotting...
+```{r}
+plot(harv_dsm)
+```
+### ...or using ggplot (after creating a data.frame with the data from our raster)
+```{r}
+harv_dsm_df <- as.data.frame(harv_dsm, xy = TRUE)
+str(harv_dsm_df)
+```
+```{r}
+ggplot() + 
+  geom_raster(data = harv_dsm_df, aes(x, y, fill = HARV_dsmCrop)) + 
+  scale_fill_viridis_c()
+```
+
+# 2. Raster calculations
+### Let's calculate canopy height from a DSM (digital surface model) and a DTM (digital terrain model) 
+```{r echo=FALSE, out.width = '60%'}
+knitr::include_graphics("canopy_height.png")
+```
+### Let's read in our digital terrain model
+```{r}
+harv_dtm <- raster("./data/HARV_dtmCrop.tif")
+plot(harv_dtm)
+```
+### Raster math: we can perform calculations between two rasters
+Let's calculate canopy height by subtracting the DTM from the DSM
+```{r}
+harv_canopy <- harv_dsm - harv_dtm
+plot(harv_canopy)
+```
+### Raster math can be slow for large rasters or complex calculations...an alternative is to use overlay
+```{r}
+harv_canopy <- overlay(harv_dsm, harv_dtm, 
+                       fun = function(r1, r2) { return( r1 - r2) })
+plot(harv_canopy)
+```
+### We can also do calculations between rasters and integers
+Let's calculate the mean height in our DTM and subtract that from our DTM
+```{r}
+harv_dtm2 <- harv_dtm - cellStats(harv_dtm, stat='mean')
+plot(harv_dtm2)
+```
+### Raster calc with logical expressions
+```{r}
+harv_dtm3 <- calc(harv_dtm, function(x) ifelse(x > 340, x, NA))
+plot(harv_dtm3)
+```
+### Saving our canopy height model for future use: 
+Let's write a GeoTiff file. R will recognize the desired output file type based on the file extension (see documentation for options)
+```{r}
+writeRaster(harv_canopy, "./data/HARV_canopy_height.tif")
+```
+
+## Exercise: come up with your own raster calculation and see if it works! Discuss with your neighbor
+
+# 3. Reading and plotting vector data
+### Let's read in a shapefile with the boundary of our field site: 
+Using the sp package: 
+```{r}
+aoi_sp <- shapefile("./data/HarClip_UTMZ18.shp")
+aoi_sp
+plot(aoi_sp)
+```
+### Now let's read in the same shapefile using the sf ("simple features") package: 
+```{r}
+library(sf)
+aoi <- st_read("./data/HarClip_UTMZ18.shp")
+```
+
+```{r}
+plot(aoi)
+```
+### Let's try another shapefile with multiple objects: 
+```{r}
+ne_states <- st_read("./data/Boundary-US-State-NEast.shp")
+head(ne_states)
+plot(ne_states)
+names(ne_states)
+```
+### We can plot SF objects with ggplot! 
+```{r}
+ggplot() + 
+  geom_sf(data = ne_states, aes(fill = NAME))
+```
+### Some common sf-specific commands: 
+```{r}
+st_bbox(ne_states)
+st_crs(ne_states)
+```
+### Simple features objects also work with many dplyr/tidyr type commands:
+```{r}
+nrow(ne_states)
+mass <- ne_states %>%
+  filter(NAME == "Massachusetts")
+
+ggplot() + 
+  geom_sf(data = mass, aes(fill = NAME))
+```
+In addition to polygon shapefiles, we can read point and line data: 
+```{r}
+tower <- st_read("./data/HARVtower_UTM18N.shp")
+roads <- st_read("./data/HARV_roads.shp")
+site_map <- ggplot(roads) + 
+  geom_sf() + 
+  geom_sf(data = tower, col = "red", size = 10, shape = "*")
+```
+Note: ggplot is displaying coordinates as lat/lon, even though our vector data has the UTM projection! 
+```{r}
+st_crs(tower)
+```
+
+# 4. Combining vector and raster data
+# Example 1: Let's calculate a 200m buffer around our flux tower 
+### Create 200m buffer around flux tower
+```{r}
+tower_buffer <- st_buffer(tower, 200)
+site_map + 
+  geom_sf(data = tower_buffer, fill = "green", alpha = 0.2) 
+```
+### "Clip" canopy height model to 200m around flux tower
+Note: We could use crop to clip the raster to the bounding box of an object, but not it's actual boundary
+```{r}
+canopy_masked <- mask(harv_canopy, tower_buffer)
+canopy_masked
+plot(canopy_masked)
+```
+### Instead, maybe we just want the canopy height values for all cells within our buffer
+```{r}
+buffer_canopy_values <- extract(harv_canopy, tower_buffer)
+```
+Extract returns a list of vectors (one for each polygon object), but we only have one object so we can unlist the result
+```{r}
+buffer_canopy_values <- unlist(buffer_canopy_values)
+hist(buffer_canopy_values)
+```
+# Example 2: extracting time series data from multiple rasters 
+### Let's find our NDVI (normalized difference vegetation index) files and read them in
+```{r}
+ndvi_files <- list.files("./data/NDVI/", 
+                            full.names = TRUE,
+                            pattern = ".tif$")
+harv_ndvi <- stack(ndvi_files)
+harv_ndvi
+```
+```{r}
+crs(harv_ndvi)
+```
+### Wait, this is a different zone! Let's reproject the raster to UTM zone 18
+```{r}
+crs(harv_dtm)
+harv_ndvi <- projectRaster(harv_ndvi, crs = crs(harv_dtm))
+```
+### Now, let's calculate mean NDVI on each date
+```{r}
+ndvi_mean <- cellStats(harv_ndvi, mean)
+plot(ndvi_mean)
+```
+### Instead, let's calculate mean NDVI at our tower location
+We could do this by finding the cell overlapping with the tower and extracting the value at that point
+```{r}
+tower_xy <- st_coordinates(tower)
+tower_row <- rowFromY(harv_ndvi, tower_xy[2])
+tower_col <- colFromX(harv_ndvi, tower_xy[1])
+
+tower_ndvi <- getValues(harv_ndvi, row = tower_row)[tower_col,]
+plot(tower_ndvi)
+```
+### We can do the same thing using extract (with fewer lines of code!)
+```{r}
+tower_ndvi <- raster::extract(harv_ndvi, tower)
+
+buffer_ndvi <- raster::extract(harv_ndvi, tower_buffer, fun = mean)
+buffer_ndvi
+```
+### Optional: Let's make this data look a little bit nicer and plot it: 
+```{r}
+ndvi_ts <- as.data.frame(unlist(buffer_ndvi)[1,])
+names(ndvi_ts) <- "meanNDVI"
+julian_day <- gsub("X|_HARV_ndvi_crop", "", row.names(ndvi_ts))
+origin <- as.Date("2011-01-01")
+ndvi_ts$date <- origin + as.integer(julian_day) - 1
+ndvi_ts
+ggplot(ndvi_ts, aes(date, meanNDVI)) + 
+  geom_point() + 
+  geom_line()
+```
+### Exercise: Come up with your own analysis using the raster and shapefile data that we have
+Remember, our vector data includes roads and our area of interest, in addition to making our own areas using things like st_buffer!
+Try to plot your results and discuss it with your neighbor
