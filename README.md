@@ -1,7 +1,8 @@
 # R Geospatial Workshop
 This respository holds some resources used in the R Geospatial workshops hosted by Stanford Libraries on 10-22-19
+Many of the examples come from this DataCarpentry lesson https://datacarpentry.org/r-raster-vector-geospatial/
 
-Download using the terminal: 
+Download this respository using the terminal: 
 ```sh
 git clone https://github.com/fdavenport/r-geospatial-102219
 ```
