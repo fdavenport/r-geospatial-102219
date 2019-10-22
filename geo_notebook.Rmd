@@ -12,7 +12,7 @@ library(raster)
 ```
 ### Set your working directory to the folder you just downloaded or cloned: 
 ```{r}
-setwd("~/Documents/teaching/r_geospatial/")
+setwd("~/Desktop/r_geospatial_102219/")
 ```
 # Outline: 
 * Reading and plotting raster data
@@ -21,7 +21,6 @@ setwd("~/Documents/teaching/r_geospatial/")
 * Combined vector and raster manipulation
     * Example 1: calculating a buffer around the flux tower
     * Example 2: extracting time-series data from a multi-band raster
-* Extras: reprojecting data, nice-looking plots
 
 # 1. Reading and plotting raster data
 ### First, let's look at raster metadata using GDALinfo
